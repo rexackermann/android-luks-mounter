@@ -69,6 +69,9 @@ set_permissions() {
   set_perm $MODPATH/system/bin/mounter 0 0 0755
 }
 
+# ⚡ Call set_permissions to apply the rules.
+set_permissions
+
 ui_print "[+] Installation complete! 🎊"
 ui_print " "
 ui_print "💡 Tips:"

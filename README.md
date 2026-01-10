@@ -1,8 +1,14 @@
 # 🚀 Android LUKS Mounter ✨
 
-Professional storage management for **LUKS-encrypted** and **plain** drives on Android. This project provides a robust shell script and a flashable module (KernelSU / APatch / Magisk) to seamlessly integrate external storage into your Android ecosystem.
+Professional storage management for **LUKS-encrypted** and **plain** drives on Android. This project brings desktop-class security and advanced mounting features to your mobile device, supporting hotplugging, auto-unlocking, and seamless app integration.
 
 Authored with ❤️ by **Rex Ackermann**.
+
+---
+
+## 👤 Author Information
+- **Author**: Rex Ackermann
+- **GitHub**: [@rexackermann](https://github.com/rexackermann) 🌐
 
 ---
 
@@ -17,58 +23,92 @@ Authored with ❤️ by **Rex Ackermann**.
 
 ---
 
-## 🚀 Installation
+## 🛠️ Prerequisites & Requirements
+> [!IMPORTANT]
+> **Dependencies are mandatory for ALL installation methods!** Even if you use the flashable module, you must install the core tools in Termux.
 
-### Option 1: Flashable Module (Recommended)
-1. Download the latest `mounter-module.zip` from the Releases page.
-2. Flash it via **KernelSU**, **APatch**, or **Magisk**.
-3. **Reboot** and enjoy!
-
-### Option 2: Manual (Termux)
-1. Clone the repository: `git clone https://github.com/rexackermann/android-mounter`
-2. Install dependencies: `pkg install cryptsetup bindfs`
-3. Link the binary: `sudo ./mounter.sh --link-bin`
-4. Run: `mounter --help`
+1. **🔑 Root Access**: Required for low-level block device operations (KernelSU, APatch, or Magisk).
+2. **📟 Termux Environment**: The engine that provides necessary libraries.
+3. **📦 Terminal Dependencies**:
+   Open Termux and run:
+   ```bash
+   pkg update && pkg upgrade
+   pkg install cryptsetup bindfs
+   ```
 
 ---
 
-## 🛠️ Usage
+## 🚀 Installation Options
 
-### 📂 Manual Mount
+### Option 1: Flashable Module (KernelSU / APatch / Magisk)
+*Best for persistence and easy management.*
+1. Download `mounter-module.zip` from the Releases page.
+2. Flash it in your SU Manager.
+3. **Reboot**. The script is now globally available and auto-runs on boot.
+
+### Option 2: Manual Setup
+*Best for quick tests or custom environments.*
+1. Clone the repo: `git clone https://github.com/rexackermann/android-luks-mounter`
+2. Link the binary: `cd android-luks-mounter && sudo ./module/system/bin/mounter --link-bin`
+3. You can now use the `mounter` command anywhere.
+
+---
+
+## 📖 How to Use Like a Pro
+
+### 1. 🔍 Discovery
+Connect your drive and find its path:
 ```bash
-sudo mounter /dev/block/sda1 MyDrive
+ls /dev/block/sd*  # Usually /dev/block/sda1 for OTG drives
 ```
 
-### ⚡ Auto-Mount Everything
+### 2. 📂 Manual Mount
+Mount a partition with a custom label:
 ```bash
-sudo mounter --all
+sudo mounter /dev/block/sda1 MyVault
 ```
 
-### 🔄 Sync & Update Config
+### 3. 🔓 Unlocking & Key Management
+- **Auto-Unlock**: If a keyfile exists in your `luks_keys` directory, the script uses it!
+- **Interactive**: The script will prompt for a password or custom key if needed.
+- **💾 Auto-Unlock Setup**: After unlocking with a password, the script will offer to create a keyfile for instant access in the future.
+
+---
+
+## ⚡ Power User Features
+
+### 🔄 Auto-Update & Sync
+Sync your configuration with current hardware and mount everything in one command:
 ```bash
 sudo mounter --auto-update-config
 ```
 
+### 📡 Smart Scanning
+Register your drives without mounting (updates labels in config):
+```bash
+sudo mounter --scan
+```
+
+### 🤖 Automatic Service
+Install the background daemon to handle storage hotplugging automatically:
+```bash
+sudo mounter --install-service
+```
+
 ---
 
-## 📡 MMRL Publication Guide
-To make your module available on **MMRL (Magisk Module Repo Loader)**:
+## � Pro-Tips & Troubleshooting
 
-1. **Host on GitHub**: Push this entire folder (including `update.json` and `changelog.md`) to a repository named `android-luks-mounter`.
-2. **Releases**: Create a GitHub Release tagged `v1.2` and upload the `mounter-module.zip`.
-3. **Submit to MMRL**:
-   - Open the **MMRL App**.
-   - Go to **Repositories** -> **Add Custom Repository**.
-   - Use the URL to your `update.json`: `https://raw.githubusercontent.com/rexackermann/android-luks-mounter/main/update.json`.
-   - Alternatively, submit your repo to the [MMRL Community](https://github.com/Googlers-Repo/MMRL-Repository) to be featured!
-
----
-
-## 💡 Developer & Author
-- **Author**: Rex Ackermann
-- **GitHub**: [@rexackermann](https://github.com/rexackermann)
+## 💡 Pro-Tips & Troubleshooting
+- **🎨 Visuals**: The script uses ANSI colors. If logs look messy, ensure your terminal supports color.
+- **📂 Custom Paths**: edit the `config` file in your keys directory to override mount locations.
+- **⚠️ Unmounting**: Always use `mounter -u Label` before unplugging!
+- **🛠️ Missing Tools?**: If `mounter` fails to find `cryptsetup`, ensure you've run the `pkg install` commands in Termux!
 
 ---
 
 ## ⚖️ License
 Released under the **MIT License**. See `LICENSE` for details.
+
+---
+*Created with ❤️ by [Rex Ackermann](https://github.com/rexackermann)*
