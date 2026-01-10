@@ -1,0 +1,455 @@
+#!/system/bin/sh
+
+################################################################################
+#                                                                              #
+#   🚀 ANDROID LUKS MOUNTER - Professional Storage Management                 #
+#                                                                              #
+#   👤 Author: Rex Ackermann                                                   #
+#   🌐 GitHub: https://github.com/rexackermann                                 #
+#                                                                              #
+#   🛠️  Requirements: Root (Magisk/KSU), Termux, Cryptsetup, Bindfs, Blkid     #
+#   ⚖️  License: MIT                                                           #
+#                                                                              #
+################################################################################
+
+# --- 📦 Configuration ---
+# 📁 Directory where your LUKS keyfiles will be stored securely.
+KEY_DIR="/storage/emulated/0/Documents/luks_keys"
+# 📂 Default parent directory for all your mount points in the Android storage.
+DEFAULT_BASE_STORAGE="/storage/emulated/0/ext"
+
+# --- ✨ Visual Polish (ANSI Colors) ---
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m' # No Color
+
+# --- 🌍 Environment Setup ---
+# 🔍 Detect Termux prefix to allow the script to find tools even when running as root.
+TERMUX_PREFIX="/data/data/com.termux/files/usr"
+# 🛤️ Common Android system paths for maximum binary compatibility.
+SYSTEM_PATHS="/sbin:/system/sbin:/system/bin:/system/xbin:/data/local/bin"
+
+# 🧠 Intelligence: Check if we are in a Termux environment and adapt PATH/Libraries.
+if [ -d "$TERMUX_PREFIX" ]; then
+    # ➕ Append Termux's bin and system paths to the environment.
+    export PATH="$PATH:$TERMUX_PREFIX/bin:$SYSTEM_PATHS"
+    # 📚 Ensure Termux-installed shared libraries (like for cryptsetup) are found.
+    export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$TERMUX_PREFIX/lib"
+else
+    # 📱 Standard path fallback for simple root shells.
+    export PATH="$PATH:$SYSTEM_PATHS"
+fi
+
+# 📤 Export variables so sub-processes and run_cmd inherit them.
+export PATH
+export LD_LIBRARY_PATH
+
+# --- 🛠️ Helper Functions ---
+
+# 📝 Standardized logging with a splash of color.
+log() {
+    echo -e "${CYAN}${BOLD}[*]${NC} $1"
+}
+
+# 🏃 Execute commands and show the user exactly what is happening in the background.
+run_cmd() {
+    echo -e "  ${PURPLE}➜${NC} ${BLUE}Running:${NC} ${BOLD}$@${NC}"
+    "$@"
+}
+
+# 🚨 Error reporting to STDERR with high visibility.
+error() {
+    echo -e "${RED}${BOLD}[!] Error:${NC} $1" >&2
+}
+
+# ⚠️ Warning reporting for non-critical but important status updates.
+warn() {
+    echo -e "${YELLOW}${BOLD}[!] Warning:${NC} $1" >&2
+}
+
+# --- ⚙️ Core Functions ---
+
+# 🔍 Dependency Check: Ensure the required tools are installed and accessible.
+check_tools() {
+    # 🛠️ These binaries are the backbone of our mounting logic.
+    for tool in cryptsetup nsenter mount bindfs blkid; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+            error "Required tool '$tool' not found in PATH."
+            error "💡 Tip: Install them in Termux via: pkg install cryptsetup bindfs"
+            exit 1
+        fi
+    done
+
+    # 📂 Persistence: Ensure the configuration and key directory exists.
+    if [ ! -d "$KEY_DIR" ]; then
+        log "Creating key directory: $KEY_DIR"
+        mkdir -p "$KEY_DIR"
+        # 🔑 Set restricted permissions (Owner only) for security.
+        chmod 700 "$KEY_DIR"
+    fi
+}
+
+# 📖 Manual: Display a beautiful and informative help menu.
+usage() {
+    echo -e "${GREEN}${BOLD}Android LUKS Mounter${NC} ✨"
+    echo -e "${BOLD}Usage:${NC} $0 [options] <device> [label]"
+    echo ""
+    echo -e "${YELLOW}${BOLD}Options:${NC}"
+    echo "  -u, --unmount <label>   🔒 Unmount a drive using its label."
+    echo "  --install-service       🤖 Install as a background service (Magisk/KSU)."
+    echo "  --link-bin [path]       🔗 Create 'mounter' alias in /system/bin (default)."
+    echo "  --scan                  📡 Scan connected drives & update config (No mount)."
+    echo "  --auto-update-config    🔄 Sync config AND mount everything connected."
+    echo "  --all                   ⚡ Auto-mount all recognized devices."
+    echo "  -h, --help              ❓ Show this help message."
+    echo ""
+    echo -e "${YELLOW}${BOLD}Examples:${NC}"
+    echo "  $0 /dev/block/sda1 MyDrive   # 📂 Mount sda1 as MyDrive"
+    echo "  $0 -u MyDrive                # 📤 Unmount MyDrive"
+    echo "  $0 --all                     # ⚡ Quick mount everything"
+    echo "  $0 --link-bin                # 🔗 Run 'mounter' from anywhere!"
+    exit 0
+}
+
+# ⚙️ Config Loader: Syncs the script with your saved preferences.
+load_config() {
+    local config_file="$KEY_DIR/config"
+    # 🌱 Auto-generate a default template if none exists.
+    if [ ! -f "$config_file" ]; then
+        log "Generating default config at $config_file"
+        cat > "$config_file" <<EOF
+# 🚀 Android Mounter Configuration - Rex Ackermann
+
+# 📂 Path to secure LUKS keyfiles
+# KEY_DIR="$KEY_DIR"
+
+# 📁 Parent directory for mount points
+# BASE_STORAGE_PATH="$DEFAULT_BASE_STORAGE"
+
+# ⏱️ Refresh interval for auto-mount service (seconds)
+# POLL_INTERVAL=5
+
+# --- 💾 Saved Labels (Auto-generated by --scan or mount) ---
+EOF
+    fi
+    
+    # 🔌 Read the config into the current shell process.
+    source "$config_file"
+    # 🔥 Use config value if provided, else fall back to script default.
+    BASE_STORAGE="${BASE_STORAGE_PATH:-$DEFAULT_BASE_STORAGE}"
+}
+
+# 🔗 Global Access: Creates a symlink for easy 'mounter' execution.
+link_bin() {
+    local link_path="${1:-/system/bin/mounter}"
+    local script_path=$(readlink -f "$0")
+
+    log "Attempting to link $script_path to $link_path..."
+    
+    # 🔓 Try remounting /system as RW for linking.
+    if [[ "$link_path" == /system/* ]]; then
+         run_cmd nsenter -t 1 -m mount -o remount,rw /system 2>/dev/null
+    fi
+
+    if run_cmd ln -sf "$script_path" "$link_path"; then
+        run_cmd chmod +x "$link_path"
+        log "Success! You can now run '${BOLD}$link_path${NC}' from anywhere."
+    else
+        error "Failed to create symlink. Try: $0 --link-bin /data/local/bin/mounter"
+    fi
+}
+
+# 🤖 Service Daemon: Creates a Magisk/KSU boot script for auto-mounting.
+install_service() {
+    local service_dir="/data/adb/service.d"
+    local service_file="$service_dir/mount_block_device.sh"
+    local script_path=$(readlink -f "$0")
+
+    if [ ! -d "$service_dir" ]; then
+        error "Service directory $service_dir not found. Are you using Magisk/KernelSU?"
+        return 1
+    fi
+
+    log "Installing service to $service_file..."
+    
+    cat > "$service_file" <<EOF
+#!/system/bin/sh
+# 🛡️ Auto-generated by Android Mounter - Rex Ackermann
+sleep 15
+INTERVAL=\${POLL_INTERVAL:-5}
+while true; do
+    # 🔄 Periodically check and mount all devices.
+    $script_path --all >> /data/local/tmp/mounter.log 2>&1
+    sleep \$INTERVAL
+done
+EOF
+
+    run_cmd chmod +x "$service_file"
+    log "Service installed! ✨ Reboot to start auto-mounting."
+}
+
+# --- 📁 Mounting Logic Functions ---
+
+# 🧹 Cleanup: Audit all mounts and remove orphans from missing devices.
+cleanup_stale_mounts() {
+    # 1️⃣ Check for active LUKS mappers with no backing block device.
+    for mapper in /dev/mapper/luks_*; do
+        [ ! -e "$mapper" ] && continue
+        local mapper_name=$(basename "$mapper")
+        local status=$(cryptsetup status "$mapper_name" 2>/dev/null)
+        local device=$(echo "$status" | grep "device:" | awk '{print $2}')
+        
+        if [ -n "$device" ] && [ ! -b "$device" ]; then
+            log "Detected stale LUKS: $mapper_name (Device $device missing)"
+            local mnt_point=$(grep "$mapper" /proc/mounts | awk '{print $2}' | head -n 1)
+            [ -n "$mnt_point" ] && unmount_device "$(basename "$mnt_point")" || run_cmd cryptsetup close "$mapper_name"
+        fi
+    done
+
+    # 2️⃣ Scan all mount points for block devices that no longer exist.
+    cat /proc/mounts | grep -E "/mnt/media_rw/|/storage/emulated/0/" | while read -r line; do
+        local dev=$(echo "$line" | awk '{print $1}')
+        local mnt=$(echo "$line" | awk '{print $2}')
+        if [[ "$dev" == /dev/block/* ]] || [[ "$dev" == /dev/mapper/* ]]; then
+            [ ! -e "$dev" ] && log "Cleaning stale mount: $mnt" && unmount_device "$(basename "$mnt")"
+        fi
+    done
+}
+
+# 🔍 Finder: Check if a device is already unlocked in /dev/mapper.
+find_existing_mapper() {
+    local dev=$1
+    for mapper in /dev/mapper/luks_*; do
+        [ ! -e "$mapper" ] && continue
+        cryptsetup status "$(basename "$mapper")" 2>/dev/null | grep -q "device:  $dev" && echo "$(basename "$mapper")" && return 0
+    done
+    return 1
+}
+
+# 📤 Unmounter: Safely detach storage and close encryption.
+unmount_device() {
+    local label=$1
+    [ -z "$label" ] && error "Label is required." && return 1
+    log "Unmounting $label..."
+
+    # 🔓 1. Kill all bindfs views for this label.
+    grep "/storage/emulated/0/.*$label " /proc/mounts | awk '{print $2}' | while read -r sp; do
+        run_cmd nsenter -t 1 -m umount "$sp" && log "Detached user view: $sp"
+    done
+
+    # 📁 2. Unmount the physical hardware point.
+    local mnt_point="/mnt/media_rw/$label"
+    mount | grep -q " $mnt_point " && run_cmd nsenter -t 1 -m umount "$mnt_point"
+
+    # 🔒 3. Seal the LUKS vault.
+    for dev in /dev/mapper/luks_${label}_*; do
+        [ -e "$dev" ] && log "Closing LUKS: $(basename "$dev")" && run_cmd cryptsetup close "$(basename "$dev")"
+    done
+}
+
+# 📂 Main Mounter: The core engine for unlocking and mounting.
+mount_device() {
+    local device=$1
+    local label=$2
+    
+    # 🛡️ Safety: Skip internal storage and other non-target blocks.
+    [ ! -b "$device" ] && return 1
+    case "$device" in *mmcblk0*|*dm-*|*loop*) [ "$AUTO_MODE" != "1" ] && error "Safety: $device is internal." ; return 1 ;; esac
+
+    # 🏷️ Auto-label if none provided.
+    [ -z "$label" ] && label=$(basename "$device")
+    local mnt_point="/mnt/media_rw/$label"
+
+    # 🚦 Avoid double-mounting if already active.
+    mount | grep -q " $mnt_point " && warn "$mnt_point already mounted." && return 0
+    grep -q "^$device " /proc/mounts && warn "$device already mounted." && return 0
+
+    log "Targeting: ${BOLD}$device${NC} ($label)"
+
+    # 🔓 LUKS Detection & Decoding.
+    local existing_mapper=$(find_existing_mapper "$device")
+    local unlocked=0
+    local mapper_name=""
+    local uuid
+    local IS_LUKS=1
+
+    if [ -n "$existing_mapper" ]; then
+        log "$device is already open as $existing_mapper"
+        mapper_name="$existing_mapper" ; unlocked=1
+        grep -q "^/dev/mapper/$mapper_name " /proc/mounts && warn "$mapper_name already mounted." && return 0
+    fi
+
+    if ! uuid=$(cryptsetup luksUUID "$device" 2>/dev/null); then
+         IS_LUKS=0 ; uuid=$(blkid -o value -s UUID "$device" 2>/dev/null)
+         [ -z "$uuid" ] && uuid=$(echo "$device" | tr '/' '_')
+         log "Plain device detected. UUID: $uuid"
+    else
+         log "LUKS device detected. UUID: $uuid"
+    fi
+
+    # 💾 Config Lookup: Restore saved label and path.
+    local safe_uuid=$(echo "$uuid" | tr '-' '_')
+    eval "saved_label=\${MAPPING_${safe_uuid}}"
+    eval "saved_storage_path=\${STORAGE_PATH_${safe_uuid}}"
+    [ -n "$saved_label" ] && ( [ -z "$label" ] || [ "$AUTO_MODE" = "1" ] ) && label="$saved_label"
+    local storage_point="${saved_storage_path:-$BASE_STORAGE/$label}"
+
+    # 🧠 Mapper Identification.
+    if [ $IS_LUKS -eq 1 ]; then
+        if [ $unlocked -eq 0 ]; then
+            local rand_suffix=$(head -n 1 /dev/urandom | tr -dc 'a-f0-9' | head -c 6)
+            mapper_name="luks_${label}_${rand_suffix}"
+        fi
+        TARGET_DEV="/dev/mapper/$mapper_name"
+    else
+        unlocked=1 ; TARGET_DEV="$device"
+    fi
+
+    # 🔑 Auto-Unlock Sequence.
+    local keyfile="$KEY_DIR/$uuid.key"
+    if [ $unlocked -eq 0 ] && [ -f "$keyfile" ]; then
+        run_cmd cryptsetup open "$device" "$mapper_name" --key-file "$keyfile" && unlocked=1
+    fi
+
+    # 🕵️ Brute-force: Try all keys in the key directory.
+    if [ $unlocked -eq 0 ]; then
+        for k in "$KEY_DIR"/*; do
+            [ ! -f "$k" ] || [ "$k" = "$keyfile" ] || [ "$(basename "$k")" = "config" ] && continue
+            run_cmd cryptsetup open "$device" "$mapper_name" --key-file "$k" && unlocked=1 && break
+        done
+    fi
+
+    # ⌨️ Interactive Unlock: Password fallback.
+    if [ $unlocked -eq 0 ]; then
+        log "Manual unlock needed for $device:"
+        echo " 1) Password (default) | 2) Select Keyfile | s) Skip"
+        read -r unlock_opt
+        case "$unlock_opt" in
+            2) printf "Keyfile path: " ; read -r mk ; [ -f "$mk" ] && run_cmd cryptsetup open "$device" "$mapper_name" --key-file "$mk" && unlocked=1 ;;
+            s|S) return 1 ;;
+            *) log "Password for $device:" ; stty -echo ; read -r PASS ; stty echo ; echo "" 
+               echo -n "$PASS" | run_cmd cryptsetup open "$device" "$mapper_name" && unlocked=1 || { error "Failed." ; unset PASS ; return 1 ; } 
+               ;;
+        esac
+        # 🔑 Offer to save this as a keyfile for next time.
+        if [ $unlocked -eq 1 ]; then
+            log "Successfully unlocked! ✨"
+            echo "Save new keyfile for auto-unlock? [y/N]" ; read -r sk
+            if [ "$sk" = "y" ]; then
+                dd if=/dev/urandom of="$keyfile" bs=512 count=1 >/dev/null 2>&1 ; chmod 600 "$keyfile"
+                [ -n "$PASS" ] && echo -n "$PASS" | run_cmd cryptsetup luksAddKey "$device" "$keyfile" || run_cmd cryptsetup luksAddKey "$device" "$keyfile"
+            fi
+        fi ; unset PASS
+    fi
+
+    # 📁 Mounting Process.
+    [ ! -d "$mnt_point" ] && run_cmd mkdir -p "$mnt_point" && run_cmd chmod 0775 "$mnt_point" && run_cmd chown root:1023 "$mnt_point"
+    
+    MOUNTED=0
+    # 1. System Auto-detect.
+    run_cmd nsenter -t 1 -m mount "$TARGET_DEV" "$mnt_point" && MOUNTED=1
+    # 2. NTFS Fallback.
+    [ $MOUNTED -eq 0 ] && command -v ntfs-3g >/dev/null && run_cmd nsenter -t 1 -m ntfs-3g "$TARGET_DEV" "$mnt_point" && MOUNTED=1
+    # 3. Blkid Force.
+    [ $MOUNTED -eq 0 ] && FS=$(blkid -o value -s TYPE "$TARGET_DEV") && [ -n "$FS" ] && run_cmd nsenter -t 1 -m mount -t "$FS" "$TARGET_DEV" "$mnt_point" && MOUNTED=1
+    # 4. Kernel Brute-force.
+    [ $MOUNTED -eq 0 ] && for fs in $(cat /proc/filesystems | grep -v "nodev" | awk '{print $2}'); do
+        run_cmd nsenter -t 1 -m mount -t "$fs" "$TARGET_DEV" "$mnt_point" >/dev/null 2>&1 && MOUNTED=1 && break
+    done
+
+    [ $MOUNTED -eq 0 ] && error "Mount failed." && [ -n "$mapper_name" ] && run_cmd cryptsetup close "$mapper_name" && return 1
+
+    # 💾 Remember this device label for the future.
+    save_config_label "$uuid" "$label" "$device"
+
+    # 🔗 User View: Create a bindfs point for app accessibility.
+    [ ! -d "$storage_point" ] && run_cmd mkdir -p "$storage_point" && run_cmd chmod 0775 "$storage_point" && run_cmd chown root:1023 "$storage_point"
+    if run_cmd nsenter -t 1 -m bindfs --map=root/1023:@root/@1023 --create-with-perms=0775 "$mnt_point" "$storage_point"; then
+        log "Success! 🎊 Your drive is now at: ${BOLD}$storage_point${NC}"
+    else
+        warn "Bindfs failed. Detaching..." ; run_cmd nsenter -t 1 -m umount "$mnt_point"
+        [ -n "$mapper_name" ] && run_cmd cryptsetup close "$mapper_name" ; return 1
+    fi
+}
+
+# 📡 Scanner: Discover and register all connected partitions.
+scan_all_devices() {
+    log "Scanning all partitions... 📡"
+    local added=0
+    for dev in $(ls /dev/block/sd* /dev/block/mmcblk1* 2>/dev/null); do
+        case "$(basename "$dev")" in sd[a-z]|mmcblk1) ls "${dev}"[0-9]* >/dev/null 2>&1 || ls "${dev}"p[0-9]* >/dev/null 2>&1 && continue ;; esac
+        local uuid
+        if ! uuid=$(cryptsetup luksUUID "$dev" 2>/dev/null); then uuid=$(blkid -o value -s UUID "$dev" 2>/dev/null) ; [ -z "$uuid" ] && uuid=$(echo "$dev" | tr '/' '_') ; fi
+        local label=$(blkid -o value -s LABEL "$dev" 2>/dev/null) ; [ -z "$label" ] && label=$(basename "$dev")
+        save_config_label "$uuid" "$label" "$dev" && added=$((added + 1))
+    done
+    log "Scan complete. Added $added new device entries! ✨"
+}
+
+# 💾 Config Persistence: Save device-to-label mappings safely.
+save_config_label() {
+    local uuid="$1" ; local label="$2" ; local dev_path="$3" ; local config_file="$KEY_DIR/config"
+    [ ! -f "$config_file" ] && return 1
+    local safe_uuid=$(echo "$uuid" | tr '-' '_')
+    grep -q "MAPPING_${safe_uuid}=" "$config_file" && return 1
+    log "Mapping $label to $uuid... 💾"
+    local type="OTG" ; [[ "$dev_path" == *mmcblk* ]] && type="MMC"
+    echo -e "\n# --- $type Device: $uuid ---" >> "$config_file"
+    echo "MAPPING_${safe_uuid}=\"$label\"" >> "$config_file"
+    echo "STORAGE_PATH_${safe_uuid}=\"$BASE_STORAGE/$label\"" >> "$config_file"
+    return 0
+}
+
+# --- 🚀 Main Execution Block ---
+
+# 1️⃣ Load user settings first.
+[ ! -d "$KEY_DIR" ] && mkdir -p "$KEY_DIR"
+load_config
+check_tools
+
+MODE="mount" ; AUTO_MODE="0" ; DEVICE="" ; LABEL=""
+
+# 2️⃣ Parse command line arguments.
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -h|--help) usage ;;
+        --install-service) MODE="install_service" ; shift ;;
+        --link-bin) MODE="link_bin" ; shift ; [ -n "$1" ] && [[ "$1" != -* ]] && LINK_PATH="$1" && shift ;;
+        -u|--unmount) MODE="unmount" ; shift ;;
+        --all) MODE="mount" ; AUTO_MODE="1" ; shift ;;
+        --scan) MODE="scan" ; shift ;;
+        --auto-update-config) MODE="auto_update" ; AUTO_MODE="1" ; shift ;;
+        *) [ -z "$DEVICE" ] && [ "$MODE" != "unmount" ] && DEVICE="$1" || LABEL="$1" ; shift ;;
+    esac
+done
+
+# 3️⃣ Dispatch to the appropriate mode.
+case "$MODE" in
+    install_service) install_service ; exit 0 ;;
+    link_bin) link_bin "$LINK_PATH" ; exit 0 ;;
+    unmount) [ -z "$LABEL" ] && [ -n "$DEVICE" ] && LABEL="$DEVICE" ; unmount_device "$LABEL" ; exit 0 ;;
+    scan) scan_all_devices ; exit 0 ;;
+    auto_update) log "Auto-updating config... 🔄" ; scan_all_devices ; ;;
+esac
+
+# 4️⃣ Handle Mounting (Auto or Manual).
+if [ "$AUTO_MODE" = "1" ]; then
+    log "Engaging auto-mount mode... ⚡" ; cleanup_stale_mounts
+    for dev in $(ls /dev/block/sd* /dev/block/mmcblk1* 2>/dev/null); do
+        case "$(basename "$dev")" in sd[a-z]|mmcblk1) ls "${dev}"[0-9]* >/dev/null 2>&1 || ls "${dev}"p[0-9]* >/dev/null 2>&1 && continue ;; esac
+        mount_device "$dev" ""
+    done
+else
+    # Manual Mount: Requires at least a device path.
+    [ -z "$DEVICE" ] && usage
+    mount_device "$DEVICE" "$LABEL"
+fi
+
+################################################################################
+# 🏁 Created with ❤️ by Rex Ackermann                                          #
+################################################################################

@@ -1,0 +1,6 @@
+{
+  "version": "v1.2",
+  "versionCode": 120,
+  "zipUrl": "https://github.com/rexackermann/android-luks-mounter/releases/download/v1.2/mounter-module.zip",
+  "changelog": "https://raw.githubusercontent.com/rexackermann/android-luks-mounter/main/changelog.md"
+}
