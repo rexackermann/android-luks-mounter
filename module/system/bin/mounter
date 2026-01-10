@@ -6,6 +6,7 @@
 #                                                                              #
 #   👤 Author: Rex Ackermann                                                   #
 #   🌐 GitHub: https://github.com/rexackermann                                 #
+#   🏷️ Version: v1.4.2-ULTIMATE                                               #
 #                                                                              #
 #   🛠️  Requirements: Root (Magisk/KSU), Termux, Cryptsetup, Bindfs, Blkid     #
 #   ⚖️  License: MIT                                                           #
@@ -28,26 +29,109 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m' # No Color
 
-# --- 🌍 Environment Setup ---
-# 🔍 Detect Termux prefix to allow the script to find tools even when running as root.
+# --- 🌍 Environment Discovery & Setup ---
+# This section aligns the environment with Termux's internal standards,
+# ensuring that even when running as root from system shells, we find
+# the correct binaries, libraries, and users.
+
 TERMUX_PREFIX="/data/data/com.termux/files/usr"
-# 🛤️ Common Android system paths for maximum binary compatibility.
+TERMUX_HOME="/data/data/com.termux/files/home"
+TERMUX_TMPDIR="$TERMUX_PREFIX/tmp"
 SYSTEM_PATHS="/sbin:/system/sbin:/system/bin:/system/xbin:/data/local/bin"
 
-# 🧠 Intelligence: Check if we are in a Termux environment and adapt PATH/Libraries.
 if [ -d "$TERMUX_PREFIX" ]; then
-    # ➕ Append Termux's bin and system paths to the environment.
-    export PATH="$PATH:$TERMUX_PREFIX/bin:$SYSTEM_PATHS"
-    # 📚 Ensure Termux-installed shared libraries (like for cryptsetup) are found.
-    export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$TERMUX_PREFIX/lib"
+    # 🔍 Deterministic User Discovery: Lookup based on file ownership
+    TERMUX_UID=$(stat -c %u "$TERMUX_PREFIX")
+    TERMUX_USER="u0_a$(($TERMUX_UID - 10000))"
+
+    # 📚 Export Termux paths and prioritize them
+    CLEAN_PATH=$(echo "$PATH" | sed -E "s|$TERMUX_PREFIX/bin:||g; s|:$TERMUX_PREFIX/bin||g")
+    export PATH="$TERMUX_PREFIX/bin:$TERMUX_PREFIX/bin/applets:$SYSTEM_PATHS:$CLEAN_PATH"
+    export LD_LIBRARY_PATH="$TERMUX_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    
+    # �️ Fix shebangs and app execution compatibility
+    if [ -f "$TERMUX_PREFIX/lib/libtermux-exec.so" ]; then
+        export LD_PRELOAD="$TERMUX_PREFIX/lib/libtermux-exec.so"
+    fi
+
+    # 🔧 Standard Termux Environment Variables
+    export PREFIX="$TERMUX_PREFIX"
+    export HOME="$TERMUX_HOME"
+    export TMPDIR="$TERMUX_TMPDIR"
+    export USER="$TERMUX_USER"
+    export LOGNAME="$TERMUX_USER"
+    [ -z "$TERM" ] && export TERM="xterm-256color"
+    [ -z "$COLORTERM" ] && export COLORTERM="truecolor"
+    [ -z "$LANG" ] && export LANG="en_US.UTF-8"
 else
-    # 📱 Standard path fallback for simple root shells.
+    # 📱 Fallback for non-Termux/Minimal environments
     export PATH="$PATH:$SYSTEM_PATHS"
 fi
 
-# 📤 Export variables so sub-processes and run_cmd inherit them.
 export PATH
 export LD_LIBRARY_PATH
+
+# --- 🛠️ Tool Discovery & Absolute Path Enforcement ---
+# We explicitly locate the best versions of our required binaries.
+# If a tool exists in Termux, we take its absolute path to avoid Toybox conflicts.
+
+find_tool() {
+    local tool=$1
+    local path
+    
+    # 1. Primary: Termux Binaries
+    if [ -x "$TERMUX_PREFIX/bin/$tool" ]; then
+        path="$TERMUX_PREFIX/bin/$tool"
+    # 2. Secondary: Termux Applets
+    elif [ -x "$TERMUX_PREFIX/bin/applets/$tool" ]; then
+        path="$TERMUX_PREFIX/bin/applets/$tool"
+    # 3. Tertiary: System Fallback
+    else
+        path=$(command -v "$tool" 2>/dev/null)
+        # Ensure it's an absolute path
+        case "$path" in
+            /*) ;;
+            *) path="" ;;
+        esac
+    fi
+    
+    if [ -z "$path" ]; then
+        return 1
+    fi
+    echo "$path"
+}
+
+# Identify and Lock-in tool paths at startup for deterministic execution.
+log "Discovering core utilities..."
+NSENTER_BIN=$(find_tool nsenter) || warn "nsenter not found!"
+BINDFS_BIN=$(find_tool bindfs) || warn "bindfs not found!"
+CRYPTSETUP_BIN=$(find_tool cryptsetup) || warn "cryptsetup not found!"
+MOUNT_BIN=$(find_tool mount) || warn "mount not found!"
+UMOUNT_BIN=$(find_tool umount) || warn "umount not found!"
+BLKID_BIN=$(find_tool blkid) || warn "blkid not found!"
+
+# Utility tools
+MKDIR_BIN=$(find_tool mkdir)
+CHMOD_BIN=$(find_tool chmod)
+CHOWN_BIN=$(find_tool chown)
+LN_BIN=$(find_tool ln)
+NTFS3G_BIN=$(find_tool ntfs-3g)
+CAT_BIN=$(find_tool cat)
+RM_BIN=$(find_tool rm)
+
+log "Binary Registry:"
+echo "  [nsenter]     -> ${NSENTER_BIN:-MISSING!}"
+echo "  [bindfs]      -> ${BINDFS_BIN:-MISSING!}"
+echo "  [cryptsetup]  -> ${CRYPTSETUP_BIN:-MISSING!}"
+echo "  [mount]       -> ${MOUNT_BIN:-MISSING!}"
+echo "  [umount]      -> ${UMOUNT_BIN:-MISSING!}"
+echo "  [blkid]       -> ${BLKID_BIN:-MISSING!}"
+
+# 🛡️ Safety: Fail early if critical tools are missing.
+if [ -z "$NSENTER_BIN" ] || [ -z "$BINDFS_BIN" ] || [ -z "$CRYPTSETUP_BIN" ]; then
+    error "One or more critical tools are missing. Please install them in Termux."
+    exit 1
+fi
 
 # --- 🛠️ Helper Functions ---
 
@@ -58,8 +142,18 @@ log() {
 
 # 🏃 Execute commands and show the user exactly what is happening in the background.
 run_cmd() {
-    echo -e "  ${PURPLE}➜${NC} ${BLUE}Running:${NC} ${BOLD}$@${NC}"
-    "$@"
+    local cmd="$1"
+    
+    # 🔍 Intelligence: If we are calling 'nsenter', we swap the generic command
+    # for the discovered absolute binary path (Termux version).
+    if [ "$cmd" = "nsenter" ] && [ -n "$NSENTER_BIN" ]; then
+        shift
+        echo -e "  ${PURPLE}➜${NC} ${BLUE}Running:${NC} ${BOLD}$NSENTER_BIN $@${NC}"
+        "$NSENTER_BIN" "$@"
+    else
+        echo -e "  ${PURPLE}➜${NC} ${BLUE}Running:${NC} ${BOLD}$@${NC}"
+        "$@"
+    fi
 }
 
 # 🚨 Error reporting to STDERR with high visibility.
@@ -88,9 +182,9 @@ check_tools() {
     # 📂 Persistence: Ensure the configuration and key directory exists.
     if [ ! -d "$KEY_DIR" ]; then
         log "Creating key directory: $KEY_DIR"
-        mkdir -p "$KEY_DIR"
+        "$MKDIR_BIN" -p "$KEY_DIR"
         # 🔑 Set restricted permissions (Owner only) for security.
-        chmod 700 "$KEY_DIR"
+        "$CHMOD_BIN" 700 "$KEY_DIR"
     fi
 }
 
@@ -122,7 +216,7 @@ load_config() {
     # 🌱 Auto-generate a default template if none exists.
     if [ ! -f "$config_file" ]; then
         log "Generating default config at $config_file"
-        cat > "$config_file" <<EOF
+        "$CAT_BIN" > "$config_file" <<EOF
 # 🚀 Android Mounter Configuration - Rex Ackermann
 
 # 📂 Path to secure LUKS keyfiles
@@ -153,11 +247,11 @@ link_bin() {
     
     # 🔓 Try remounting /system as RW for linking.
     if [[ "$link_path" == /system/* ]]; then
-         run_cmd nsenter -t 1 -m mount -o remount,rw /system 2>/dev/null
+         run_cmd nsenter -t 1 -m -- mount -o remount,rw /system 2>/dev/null
     fi
 
-    if run_cmd ln -sf "$script_path" "$link_path"; then
-        run_cmd chmod +x "$link_path"
+    if run_cmd "$LN_BIN" -sf "$script_path" "$link_path"; then
+        run_cmd "$CHMOD_BIN" +x "$link_path"
         log "Success! You can now run '${BOLD}$link_path${NC}' from anywhere."
     else
         error "Failed to create symlink. Try: $0 --link-bin /data/local/bin/mounter"
@@ -177,7 +271,7 @@ install_service() {
 
     log "Installing service to $service_file..."
     
-    cat > "$service_file" <<EOF
+    "$CAT_BIN" > "$service_file" <<EOF
 #!/system/bin/sh
 # 🛡️ Auto-generated by Android Mounter - Rex Ackermann
 sleep 15
@@ -189,7 +283,7 @@ while true; do
 done
 EOF
 
-    run_cmd chmod +x "$service_file"
+    run_cmd "$CHMOD_BIN" +x "$service_file"
     log "Service installed! ✨ Reboot to start auto-mounting."
 }
 
@@ -201,13 +295,13 @@ cleanup_stale_mounts() {
     for mapper in /dev/mapper/luks_*; do
         [ ! -e "$mapper" ] && continue
         local mapper_name=$(basename "$mapper")
-        local status=$(cryptsetup status "$mapper_name" 2>/dev/null)
+        local status=$("$CRYPTSETUP_BIN" status "$mapper_name" 2>/dev/null)
         local device=$(echo "$status" | grep "device:" | awk '{print $2}')
         
         if [ -n "$device" ] && [ ! -b "$device" ]; then
             log "Detected stale LUKS: $mapper_name (Device $device missing)"
             local mnt_point=$(grep "$mapper" /proc/mounts | awk '{print $2}' | head -n 1)
-            [ -n "$mnt_point" ] && unmount_device "$(basename "$mnt_point")" || run_cmd cryptsetup close "$mapper_name"
+            [ -n "$mnt_point" ] && unmount_device "$(basename "$mnt_point")" || run_cmd "$CRYPTSETUP_BIN" close "$mapper_name"
         fi
     done
 
@@ -226,7 +320,7 @@ find_existing_mapper() {
     local dev=$1
     for mapper in /dev/mapper/luks_*; do
         [ ! -e "$mapper" ] && continue
-        cryptsetup status "$(basename "$mapper")" 2>/dev/null | grep -q "device:  $dev" && echo "$(basename "$mapper")" && return 0
+        "$CRYPTSETUP_BIN" status "$(basename "$mapper")" 2>/dev/null | grep -q "device:  $dev" && echo "$(basename "$mapper")" && return 0
     done
     return 1
 }
@@ -239,16 +333,16 @@ unmount_device() {
 
     # 🔓 1. Kill all bindfs views for this label.
     grep "/storage/emulated/0/.*$label " /proc/mounts | awk '{print $2}' | while read -r sp; do
-        run_cmd nsenter -t 1 -m umount "$sp" && log "Detached user view: $sp"
+        run_cmd nsenter -t 1 -m -- umount "$sp" && log "Detached user view: $sp"
     done
 
     # 📁 2. Unmount the physical hardware point.
     local mnt_point="/mnt/media_rw/$label"
-    mount | grep -q " $mnt_point " && run_cmd nsenter -t 1 -m umount "$mnt_point"
+    mount | grep -q " $mnt_point " && run_cmd nsenter -t 1 -m -- umount "$mnt_point"
 
     # 🔒 3. Seal the LUKS vault.
     for dev in /dev/mapper/luks_${label}_*; do
-        [ -e "$dev" ] && log "Closing LUKS: $(basename "$dev")" && run_cmd cryptsetup close "$(basename "$dev")"
+        [ -e "$dev" ] && log "Closing LUKS: $(basename "$dev")" && run_cmd "$CRYPTSETUP_BIN" close "$(basename "$dev")"
     done
 }
 
@@ -284,8 +378,8 @@ mount_device() {
         grep -q "^/dev/mapper/$mapper_name " /proc/mounts && warn "$mapper_name already mounted." && return 0
     fi
 
-    if ! uuid=$(cryptsetup luksUUID "$device" 2>/dev/null); then
-         IS_LUKS=0 ; uuid=$(blkid -o value -s UUID "$device" 2>/dev/null)
+    if ! uuid=$("$CRYPTSETUP_BIN" luksUUID "$device" 2>/dev/null); then
+         IS_LUKS=0 ; uuid=$("$BLKID_BIN" -o value -s UUID "$device" 2>/dev/null)
          [ -z "$uuid" ] && uuid=$(echo "$device" | tr '/' '_')
          log "Plain device detected. UUID: $uuid"
     else
@@ -313,14 +407,14 @@ mount_device() {
     # 🔑 Auto-Unlock Sequence.
     local keyfile="$KEY_DIR/$uuid.key"
     if [ $unlocked -eq 0 ] && [ -f "$keyfile" ]; then
-        run_cmd cryptsetup open "$device" "$mapper_name" --key-file "$keyfile" && unlocked=1
+        run_cmd "$CRYPTSETUP_BIN" open "$device" "$mapper_name" --key-file "$keyfile" && unlocked=1
     fi
 
     # 🕵️ Brute-force: Try all keys in the key directory.
     if [ $unlocked -eq 0 ]; then
         for k in "$KEY_DIR"/*; do
             [ ! -f "$k" ] || [ "$k" = "$keyfile" ] || [ "$(basename "$k")" = "config" ] && continue
-            run_cmd cryptsetup open "$device" "$mapper_name" --key-file "$k" && unlocked=1 && break
+            run_cmd "$CRYPTSETUP_BIN" open "$device" "$mapper_name" --key-file "$k" && unlocked=1 && break
         done
     fi
 
@@ -330,10 +424,10 @@ mount_device() {
         echo " 1) Password (default) | 2) Select Keyfile | s) Skip"
         read -r unlock_opt
         case "$unlock_opt" in
-            2) printf "Keyfile path: " ; read -r mk ; [ -f "$mk" ] && run_cmd cryptsetup open "$device" "$mapper_name" --key-file "$mk" && unlocked=1 ;;
+            2) printf "Keyfile path: " ; read -r mk ; [ -f "$mk" ] && run_cmd "$CRYPTSETUP_BIN" open "$device" "$mapper_name" --key-file "$mk" && unlocked=1 ;;
             s|S) return 1 ;;
             *) log "Password for $device:" ; stty -echo ; read -r PASS ; stty echo ; echo "" 
-               echo -n "$PASS" | run_cmd cryptsetup open "$device" "$mapper_name" && unlocked=1 || { error "Failed." ; unset PASS ; return 1 ; } 
+               echo -n "$PASS" | run_cmd "$CRYPTSETUP_BIN" open "$device" "$mapper_name" && unlocked=1 || { error "Failed." ; unset PASS ; return 1 ; } 
                ;;
         esac
         # 🔑 Offer to save this as a keyfile for next time.
@@ -342,38 +436,41 @@ mount_device() {
             echo "Save new keyfile for auto-unlock? [y/N]" ; read -r sk
             if [ "$sk" = "y" ]; then
                 dd if=/dev/urandom of="$keyfile" bs=512 count=1 >/dev/null 2>&1 ; chmod 600 "$keyfile"
-                [ -n "$PASS" ] && echo -n "$PASS" | run_cmd cryptsetup luksAddKey "$device" "$keyfile" || run_cmd cryptsetup luksAddKey "$device" "$keyfile"
+                [ -n "$PASS" ] && echo -n "$PASS" | run_cmd "$CRYPTSETUP_BIN" luksAddKey "$device" "$keyfile" || run_cmd "$CRYPTSETUP_BIN" luksAddKey "$device" "$keyfile"
             fi
         fi ; unset PASS
     fi
 
     # 📁 Mounting Process.
-    [ ! -d "$mnt_point" ] && run_cmd mkdir -p "$mnt_point" && run_cmd chmod 0775 "$mnt_point" && run_cmd chown root:1023 "$mnt_point"
+    [ ! -d "$mnt_point" ] && run_cmd "$MKDIR_BIN" -p "$mnt_point" && run_cmd "$CHMOD_BIN" 0775 "$mnt_point" && run_cmd "$CHOWN_BIN" root:1023 "$mnt_point"
     
     MOUNTED=0
+    # 0. Pass environment to nsenter'ed commands
+    local NS_ENV="env PATH=$PATH LD_LIBRARY_PATH=$LD_LIBRARY_PATH LD_PRELOAD=$LD_PRELOAD"
+    
     # 1. System Auto-detect.
-    run_cmd nsenter -t 1 -m mount "$TARGET_DEV" "$mnt_point" && MOUNTED=1
+    run_cmd nsenter -t 1 -m -- $NS_ENV "$MOUNT_BIN" "$TARGET_DEV" "$mnt_point" && MOUNTED=1
     # 2. NTFS Fallback.
-    [ $MOUNTED -eq 0 ] && command -v ntfs-3g >/dev/null && run_cmd nsenter -t 1 -m ntfs-3g "$TARGET_DEV" "$mnt_point" && MOUNTED=1
+    [ $MOUNTED -eq 0 ] && [ -n "$NTFS3G_BIN" ] && run_cmd nsenter -t 1 -m -- $NS_ENV "$NTFS3G_BIN" "$TARGET_DEV" "$mnt_point" && MOUNTED=1
     # 3. Blkid Force.
-    [ $MOUNTED -eq 0 ] && FS=$(blkid -o value -s TYPE "$TARGET_DEV") && [ -n "$FS" ] && run_cmd nsenter -t 1 -m mount -t "$FS" "$TARGET_DEV" "$mnt_point" && MOUNTED=1
+    [ $MOUNTED -eq 0 ] && FS=$("$BLKID_BIN" -o value -s TYPE "$TARGET_DEV") && [ -n "$FS" ] && run_cmd nsenter -t 1 -m -- $NS_ENV "$MOUNT_BIN" -t "$FS" "$TARGET_DEV" "$mnt_point" && MOUNTED=1
     # 4. Kernel Brute-force.
     [ $MOUNTED -eq 0 ] && for fs in $(cat /proc/filesystems | grep -v "nodev" | awk '{print $2}'); do
-        run_cmd nsenter -t 1 -m mount -t "$fs" "$TARGET_DEV" "$mnt_point" >/dev/null 2>&1 && MOUNTED=1 && break
+        run_cmd nsenter -t 1 -m -- $NS_ENV "$MOUNT_BIN" -t "$fs" "$TARGET_DEV" "$mnt_point" >/dev/null 2>&1 && MOUNTED=1 && break
     done
 
-    [ $MOUNTED -eq 0 ] && error "Mount failed." && [ -n "$mapper_name" ] && run_cmd cryptsetup close "$mapper_name" && return 1
+    [ $MOUNTED -eq 0 ] && error "Mount failed." && [ -n "$mapper_name" ] && run_cmd "$CRYPTSETUP_BIN" close "$mapper_name" && return 1
 
     # 💾 Remember this device label for the future.
     save_config_label "$uuid" "$label" "$device"
 
     # 🔗 User View: Create a bindfs point for app accessibility.
-    [ ! -d "$storage_point" ] && run_cmd mkdir -p "$storage_point" && run_cmd chmod 0775 "$storage_point" && run_cmd chown root:1023 "$storage_point"
-    if run_cmd nsenter -t 1 -m bindfs --map=root/1023:@root/@1023 --create-with-perms=0775 "$mnt_point" "$storage_point"; then
+    [ ! -d "$storage_point" ] && run_cmd "$MKDIR_BIN" -p "$storage_point" && run_cmd "$CHMOD_BIN" 0775 "$storage_point" && run_cmd "$CHOWN_BIN" root:1023 "$storage_point"
+    if run_cmd nsenter -t 1 -m -- $NS_ENV "$BINDFS_BIN" --map=root/1023:@root/@1023 --create-with-perms=0775 "$mnt_point" "$storage_point"; then
         log "Success! 🎊 Your drive is now at: ${BOLD}$storage_point${NC}"
     else
-        warn "Bindfs failed. Detaching..." ; run_cmd nsenter -t 1 -m umount "$mnt_point"
-        [ -n "$mapper_name" ] && run_cmd cryptsetup close "$mapper_name" ; return 1
+        warn "Bindfs failed. Detaching..." ; run_cmd nsenter -t 1 -m -- "$UMOUNT_BIN" "$mnt_point"
+        [ -n "$mapper_name" ] && run_cmd "$CRYPTSETUP_BIN" close "$mapper_name" ; return 1
     fi
 }
 
@@ -384,8 +481,8 @@ scan_all_devices() {
     for dev in $(ls /dev/block/sd* /dev/block/mmcblk1* 2>/dev/null); do
         case "$(basename "$dev")" in sd[a-z]|mmcblk1) ls "${dev}"[0-9]* >/dev/null 2>&1 || ls "${dev}"p[0-9]* >/dev/null 2>&1 && continue ;; esac
         local uuid
-        if ! uuid=$(cryptsetup luksUUID "$dev" 2>/dev/null); then uuid=$(blkid -o value -s UUID "$dev" 2>/dev/null) ; [ -z "$uuid" ] && uuid=$(echo "$dev" | tr '/' '_') ; fi
-        local label=$(blkid -o value -s LABEL "$dev" 2>/dev/null) ; [ -z "$label" ] && label=$(basename "$dev")
+        if ! uuid=$("$CRYPTSETUP_BIN" luksUUID "$dev" 2>/dev/null); then uuid=$("$BLKID_BIN" -o value -s UUID "$dev" 2>/dev/null) ; [ -z "$uuid" ] && uuid=$(echo "$dev" | tr '/' '_') ; fi
+        local label=$("$BLKID_BIN" -o value -s LABEL "$dev" 2>/dev/null) ; [ -z "$label" ] && label=$(basename "$dev")
         save_config_label "$uuid" "$label" "$dev" && added=$((added + 1))
     done
     log "Scan complete. Added $added new device entries! ✨"
@@ -406,9 +503,13 @@ save_config_label() {
 }
 
 # --- 🚀 Main Execution Block ---
+SESSION_ID=$(date +%s)_$((RANDOM % 1000))
+log "Starting Android LUKS Mounter v1.4.3-ULTIMATE ✨"
+log "Session ID: $SESSION_ID"
+log "Executing from: $(readlink -f "$0")"
 
 # 1️⃣ Load user settings first.
-[ ! -d "$KEY_DIR" ] && mkdir -p "$KEY_DIR"
+[ ! -d "$KEY_DIR" ] && "$MKDIR_BIN" -p "$KEY_DIR"
 load_config
 check_tools
 

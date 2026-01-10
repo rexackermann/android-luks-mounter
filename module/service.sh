@@ -1,8 +1,11 @@
 #!/system/bin/sh
 # 🤖 Android LUKS Mounter Service Script
 
-# Wait for boot to settle
-sleep 15
+# Wait for boot to settle and user to unlock (FBE)
+# On modern Android, /sdcard/ isn't fully accessible until the first unlock.
+until [ -d "/sdcard/Android" ]; do
+  sleep 1
+done
 
 # Global paths are already handled by the mounter script itself,
 # so we can just call it with --all.

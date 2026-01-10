@@ -63,6 +63,12 @@ fi
 ui_print "✅ All dependencies found! ✨"
 ui_print "[*] Extracting module files..."
 
+# 🏷️ Version Reporting: Show the user exactly what is inside the ZIP.
+INSTALLED_VER=$(grep "Version:" "$MODPATH/system/bin/mounter" | head -n 1 | awk '{print $NF}')
+ui_print " "
+ui_print "📦 Installing Mounter Version: ${BOLD}${CYAN}${INSTALLED_VER:-Unknown}${NC}"
+ui_print " "
+
 # --- 🏗️ Setup Permissions ---
 set_permissions() {
   set_perm_recursive $MODPATH 0 0 0755 0644
