@@ -97,12 +97,11 @@ sudo mounter --install-service
 
 ---
 
-## 💡 Pro-Tips & Troubleshooting
+- **🔑 Custom Key Mapping**: You can now define a specific keyfile for any device in your `config` via `KEY_PATH_uuid="/path/to/key"`. This supports any file name (e.g., `al` without `.key`).
 - **📊 Binary Registry**: Check the top of `/data/local/tmp/mounter.log` to see exactly which binaries the script found (Termux vs System).
-- **🛡️ Deterministic Paths**: The script now uses absolute paths for everything to avoid "Unknown option" errors caused by limited system tools.
+- **🛡️ Deterministic Paths**: The script now uses absolute paths for everything to avoid "Unknown option" errors.
 - **📂 Custom Paths**: Edit the `config` file in your keys directory to override mount locations.
 - **⚠️ Unmounting**: Always use `mounter -u Label` before unplugging!
-- **🛠️ Missing Tools?**: If `mounter` fails to find `cryptsetup`, ensure you've run the `pkg install` commands in Termux!
 
 ---
 

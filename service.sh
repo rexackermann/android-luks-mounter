@@ -13,6 +13,13 @@ done
 # it's better to just trigger it once or run a simple loop here.
 
 while true; do
-    /system/bin/mounter --all >> /data/local/tmp/mounter.log 2>&1
+    # 📏 Log Management: Cap the log at 10,000 lines to prevent storage bloat.
+    LOG_FILE="/data/local/tmp/mounter.log"
+    if [ -f "$LOG_FILE" ] && [ "$(wc -l < "$LOG_FILE")" -gt 10000 ]; then
+        # Keep the last 10,000 lines
+        tail -n 10000 "$LOG_FILE" > "${LOG_FILE}.tmp" && mv "${LOG_FILE}.tmp" "$LOG_FILE"
+    fi
+
+    /system/bin/mounter --all >> "$LOG_FILE" 2>&1
     sleep 10
 done

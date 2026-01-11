@@ -3,31 +3,23 @@
 # 👤 Author: Rex Ackermann
 
 # --- Configuration ---
-MODULE_DIR="module"
 OUTPUT_ZIP="mounter-module.zip"
 
 # --- 🚀 Build Process ---
 echo "[*] Starting build for Android LUKS Mounter..."
 
-# 1. Verification
-if [ ! -d "$MODULE_DIR" ]; then
-    echo "Error: Module directory not found!"
-    exit 1
-fi
-
-# 2. Cleanup
+# 1. Cleanup
 if [ -f "$OUTPUT_ZIP" ]; then
     echo "[+] Removing old build..."
     rm "$OUTPUT_ZIP"
 fi
 
-# 3. Packaging
+# 2. Packaging
 echo "[+] Creating flashable ZIP: $OUTPUT_ZIP"
-cd "$MODULE_DIR"
-zip -r9 "../$OUTPUT_ZIP" ./* -x ".*"
-cd ..
+# We exclude the build script itself and repo metadata/tracking files from the ZIP.
+zip -r9 "$OUTPUT_ZIP" module.prop customize.sh service.sh action.sh system/ LICENSE README.md -x ".*"
 
-# 4. Success
+# 3. Success
 if [ -f "$OUTPUT_ZIP" ]; then
     echo " "
     echo "################################################"
