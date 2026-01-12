@@ -6,7 +6,7 @@
 #                                                                              #
 #   👤 Author: Rex Ackermann                                                   #
 #   🌐 GitHub: https://github.com/rexackermann                                 #
-#   🏷️ Version: v1.5.30-HYBRID                                             #
+#   🏷️ Version: v1.5.31-BINDFS-FIX                                             #
 #                                                                              #
 #   🛠️  Requirements: Root (Magisk/KSU), Termux, Cryptsetup, Bindfs, Blkid     #
 #   ⚖️  License: MIT                                                           #
@@ -799,9 +799,14 @@ mount_device() {
         # Mimic native Android media folders (like Podcasts, Music, etc.)
         # Owner: Termux (so you can access via shell)
         # Group: media_rw (1023) - Android's media access group
-        # Perms: 2770 (rwxrws---) - Group write + setgid bit
-        # The setgid (2000) ensures new files inherit the media_rw group
-        run_cmd nsenter -t 1 -m -- $BINDFS_ENV "$BINDFS_BIN" -u "$TERMUX_UID" -g 1023 -p 2770 "$mnt_point" "$target_storage"
+        # Perms: rwxrws--- (0770 + setgid) - Group write + setgid bit
+        # The setgid ensures new files inherit the media_rw group
+        run_cmd nsenter -t 1 -m -- $BINDFS_ENV "$BINDFS_BIN" \
+            -u "$TERMUX_UID" \
+            -g 1023 \
+            --perms=0770 \
+            --create-with-perms=g+s \
+            "$mnt_point" "$target_storage"
         
         # 🧪 User View Verification
         if ! $NSENTER_BIN -t 1 -m -- ls -1q "$target_storage" >/dev/null 2>&1; then
@@ -963,7 +968,7 @@ show_status() {
 # --- 🚀 Main Execution Block ---
 
 SESSION_ID=$(date +%s)_$((RANDOM % 1000))
-log "Starting Android LUKS Mounter v1.5.30-HYBRID ✨"
+log "Starting Android LUKS Mounter v1.5.31-BINDFS-FIX ✨"
 log "Session ID: $SESSION_ID"
 log "Executing from: $(readlink -f "$0")"
 
