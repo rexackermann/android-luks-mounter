@@ -6,7 +6,7 @@
 #                                                                              #
 #   👤 Author: Rex Ackermann                                                   #
 #   🌐 GitHub: https://github.com/rexackermann                                 #
-#   🏷️ Version: v1.5.28-MEDIA-RW                                             #
+#   🏷️ Version: v1.5.29-WARNINGS                                             #
 #                                                                              #
 #   🛠️  Requirements: Root (Magisk/KSU), Termux, Cryptsetup, Bindfs, Blkid     #
 #   ⚖️  License: MIT                                                           #
@@ -253,6 +253,20 @@ load_config() {
 
 # 📁 Parent directory for mount points
 # BASE_STORAGE_PATH="$DEFAULT_BASE_STORAGE"
+
+# ⚠️  IMPORTANT: Storage Path Limitations
+# ================================================
+# If you use /storage/emulated/0/* paths, Android's FUSE layer
+# may override permissions and prevent write access from apps.
+# 
+# RECOMMENDED ALTERNATIVES:
+#   1. /data/media/0/your_folder  (bypasses FUSE, full permissions)
+#   2. Keep default /storage/emulated/0/ext (uses media_rw group)
+#
+# If you experience "read-only" issues with file managers:
+#   - Check if your path is inside /storage/emulated/0/
+#   - Try switching to /data/media/0/ instead
+# ================================================
 
 # ⏱️ Refresh interval for auto-mount service (seconds)
 # POLL_INTERVAL=5
@@ -792,6 +806,15 @@ mount_device() {
              [ $IS_LUKS -eq 1 ] && n_type="Secure Drive"
              send_notification "Android Mounter" "Mounted $n_type ($(basename "$device")) on $target_storage" "$dev_tag"
              
+             # ⚠️ Storage Path Warning
+             if [[ "$target_storage" == /storage/emulated/0/* ]]; then
+                 warn "⚠️  NOTICE: Mounted to /storage/emulated/0/ path."
+                 warn "If you experience permission issues with file managers:"
+                 warn "  1. Try /data/media/0/ instead (edit config file)"
+                 warn "  2. Or use a root-enabled file manager"
+                 warn "See config for details: $KEY_DIR/config"
+             fi
+             
              # 💾 Update config with successful mapping.
              if [ "$AUTO_MODE" != "1" ]; then
                  save_config_label "$uuid" "$label" "$device"
@@ -920,7 +943,7 @@ show_status() {
 # --- 🚀 Main Execution Block ---
 
 SESSION_ID=$(date +%s)_$((RANDOM % 1000))
-log "Starting Android LUKS Mounter v1.5.28-MEDIA-RW ✨"
+log "Starting Android LUKS Mounter v1.5.29-WARNINGS ✨"
 log "Session ID: $SESSION_ID"
 log "Executing from: $(readlink -f "$0")"
 
