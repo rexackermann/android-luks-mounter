@@ -81,10 +81,12 @@ ui_print "[*] Extracting module files..."
 
 # 🏷️ Version Reporting
 # Extract 'Version: v...' from the script header to show user.
-INSTALLED_VER=$(grep "Version:" "$MODPATH/system/bin/mounter" | head -n 1 | awk '{print $NF}')
+# Use sed to safely capture "v..." until the trailing space/hash.
+VERSION_MATCH=$(grep "Version:" "$MODPATH/system/bin/mounter" | head -n 1)
+INSTALLED_VER=$(echo "$VERSION_MATCH" | sed -n 's/.*Version: \(v[0-9.]*-[A-Z0-9-]*\).*/\1/p')
+
 ui_print " "
-# FIX: Removed ANSI colors here to prevent rendering issues on some terminals.
-ui_print "📦 Installing Mounter Version: ${INSTALLED_VER:-Unknown}"
+ui_print "📦 Installing Mounter Version: ${INSTALLED_VER:-v1.5.x-UNKNOWN}"
 ui_print " "
 
 # --- 🏗️ Setup Permissions ---
@@ -93,8 +95,12 @@ ui_print " "
 set_permissions() {
   # Recursive: User 0, Group 0, Dir 755, File 644
   set_perm_recursive $MODPATH 0 0 0755 0644
-  # Explicit: Make the mounter script executable (0755)
+  
+  # Explicit: Executables
   set_perm $MODPATH/system/bin/mounter 0 0 0755
+  set_perm $MODPATH/service.sh 0 0 0755
+  set_perm $MODPATH/action.sh 0 0 0755
+  set_perm $MODPATH/customize.sh 0 0 0755
 }
 
 # ⚡ Call set_permissions to apply the rules.
