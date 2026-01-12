@@ -1,6 +1,6 @@
 {
-    "version": "v1.5.27-ROOT-OWNER",
-    "versionCode": 1770,
-    "zipUrl": "https://github.com/rexackermann/android-luks-mounter/releases/download/v1.5.27-ROOT-OWNER/mounter-module.zip",
+    "version": "v1.5.28-MEDIA-RW",
+    "versionCode": 1780,
+    "zipUrl": "https://github.com/rexackermann/android-luks-mounter/releases/download/v1.5.28-MEDIA-RW/mounter-module.zip",
     "changelog": "https://raw.githubusercontent.com/rexackermann/android-luks-mounter/main/changelog.md"
 }

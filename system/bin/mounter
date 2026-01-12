@@ -6,7 +6,7 @@
 #                                                                              #
 #   👤 Author: Rex Ackermann                                                   #
 #   🌐 GitHub: https://github.com/rexackermann                                 #
-#   🏷️ Version: v1.5.27-ROOT-OWNER                                             #
+#   🏷️ Version: v1.5.28-MEDIA-RW                                             #
 #                                                                              #
 #   🛠️  Requirements: Root (Magisk/KSU), Termux, Cryptsetup, Bindfs, Blkid     #
 #   ⚖️  License: MIT                                                           #
@@ -757,13 +757,17 @@ mount_device() {
         # 🔗 Bindfs User View (Global NS).
         log "Creating user-visible bindfs view at $target_storage..."
         [ ! -d "$target_storage" ] && run_cmd "$MKDIR_BIN" -p "$target_storage"
-        run_cmd "$CHOWN_BIN" "$TERMUX_UID:$TERMUX_UID" "$target_storage" 2>/dev/null
         
         # 🩹 Bindfs Safe Mode (Strip LD_PRELOAD)
         local BINDFS_ENV="env PATH=$PATH LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
         
-        # Try 1: Bindfs with ownership remapping
-        run_cmd nsenter -t 1 -m -- $BINDFS_ENV "$BINDFS_BIN" -u "$TERMUX_UID" -g "$TERMUX_UID" -p 0755 "$mnt_point" "$target_storage"
+        # 🎯 ANDROID MEDIA STORAGE PATTERN
+        # Mimic native Android media folders (like Podcasts, Music, etc.)
+        # Owner: Termux (so you can access via shell)
+        # Group: media_rw (1023) - Android's media access group
+        # Perms: 2770 (rwxrws---) - Group write + setgid bit
+        # The setgid (2000) ensures new files inherit the media_rw group
+        run_cmd nsenter -t 1 -m -- $BINDFS_ENV "$BINDFS_BIN" -u "$TERMUX_UID" -g 1023 -p 2770 "$mnt_point" "$target_storage"
         
         # 🧪 User View Verification
         if ! $NSENTER_BIN -t 1 -m -- ls -1q "$target_storage" >/dev/null 2>&1; then
@@ -774,22 +778,24 @@ mount_device() {
              log "Fallback: Creating standard bind mount (ownership mapping disabled)..."
              run_cmd nsenter -t 1 -m -- mount --bind "$mnt_point" "$target_storage"
              
-             local dev_tag="AndroidMounter_$(basename "$device")"
              if ! $NSENTER_BIN -t 1 -m -- ls -1q "$target_storage" >/dev/null 2>&1; then
                   error "Fallback mount also failed. User view unavailable."
                   send_notification "Android Mounter" "User View Failed for $(basename "$device") ⚠️" "$dev_tag"
              else
                   log "Fallback active: ${YELLOW}Access OK (Root owned)${NC}"
                   send_notification "Android Mounter" "Mounted (Fallback Mode) on $target_storage" "$dev_tag"
+                  log "Success! 🎊 Your drive is now at: ${BOLD}$target_storage${NC}"
              fi
         else
              # 🔔 Notify User (Success)
-             local n_type="Drive" ; [ $IS_LUKS -eq 1 ] && n_type="Secure Drive"
-             local dev_tag="AndroidMounter_$(basename "$device")"
+             local n_type="Drive"
+             [ $IS_LUKS -eq 1 ] && n_type="Secure Drive"
              send_notification "Android Mounter" "Mounted $n_type ($(basename "$device")) on $target_storage" "$dev_tag"
              
              # 💾 Update config with successful mapping.
-             [ "$AUTO_MODE" != "1" ] && save_config_label "$uuid" "$label" "$device"
+             if [ "$AUTO_MODE" != "1" ]; then
+                 save_config_label "$uuid" "$label" "$device"
+             fi
              log "Success! 🎊 Your drive is now at: ${BOLD}$target_storage${NC}"
         fi
     else
@@ -914,7 +920,7 @@ show_status() {
 # --- 🚀 Main Execution Block ---
 
 SESSION_ID=$(date +%s)_$((RANDOM % 1000))
-log "Starting Android LUKS Mounter v1.5.27-ROOT-OWNER ✨"
+log "Starting Android LUKS Mounter v1.5.28-MEDIA-RW ✨"
 log "Session ID: $SESSION_ID"
 log "Executing from: $(readlink -f "$0")"
 
