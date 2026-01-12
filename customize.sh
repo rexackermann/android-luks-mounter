@@ -99,6 +99,7 @@ set_permissions() {
   # Explicit: Executables
   set_perm $MODPATH/system/bin/mounter 0 0 0755
   set_perm $MODPATH/service.sh 0 0 0755
+  set_perm $MODPATH/post-fs-data.sh 0 0 0755
   set_perm $MODPATH/action.sh 0 0 0755
   set_perm $MODPATH/customize.sh 0 0 0755
 }
@@ -108,7 +109,22 @@ set_permissions
 
 ui_print "[+] Installation complete! 🎊"
 ui_print " "
+ui_print "================================================"
+ui_print "⚠️  IMPORTANT: REBOOT REQUIRED"
+ui_print "================================================"
+ui_print "You MUST reboot your device now for the module"
+ui_print "to work correctly."
+ui_print " "
+ui_print "WHY? Magisk needs to establish mount points"
+ui_print "during early boot to prevent permission issues."
+ui_print " "
+ui_print "AFTER REBOOT:"
+ui_print "  ✅ Hotplugging works (no more reboots needed)"
+ui_print "  ✅ Drives auto-mount when plugged in"
+ui_print "================================================"
+ui_print " "
 ui_print "💡 Tips:"
 ui_print " - Look for the 'Action' button in your SU Manager."
 ui_print " - Use 'mounter --help' in terminal for details."
+ui_print " - Check logs: /data/local/tmp/mounter.log"
 ui_print " "

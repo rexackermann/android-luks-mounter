@@ -6,7 +6,7 @@
 #                                                                              #
 #   👤 Author: Rex Ackermann                                                   #
 #   🌐 GitHub: https://github.com/rexackermann                                 #
-#   🏷️ Version: v1.5.29-WARNINGS                                             #
+#   🏷️ Version: v1.5.30-HYBRID                                             #
 #                                                                              #
 #   🛠️  Requirements: Root (Magisk/KSU), Termux, Cryptsetup, Bindfs, Blkid     #
 #   ⚖️  License: MIT                                                           #
@@ -254,18 +254,38 @@ load_config() {
 # 📁 Parent directory for mount points
 # BASE_STORAGE_PATH="$DEFAULT_BASE_STORAGE"
 
-# ⚠️  IMPORTANT: Storage Path Limitations
+# ⚠️  CRITICAL: First-Time Setup Requirements
 # ================================================
-# If you use /storage/emulated/0/* paths, Android's FUSE layer
-# may override permissions and prevent write access from apps.
+# After installing this module, you MUST REBOOT once.
 # 
-# RECOMMENDED ALTERNATIVES:
-#   1. /data/media/0/your_folder  (bypasses FUSE, full permissions)
-#   2. Keep default /storage/emulated/0/ext (uses media_rw group)
+# WHY? Magisk needs to establish the mount point directory
+# structure during early boot. Without this, Android's storage
+# layer will override permissions and cause read-only issues.
 #
-# If you experience "read-only" issues with file managers:
-#   - Check if your path is inside /storage/emulated/0/
-#   - Try switching to /data/media/0/ instead
+# AFTER THE FIRST REBOOT:
+#   ✅ Hotplugging works normally (no reboot needed)
+#   ✅ Drives auto-mount when plugged in
+#   ✅ Permissions are correct (media_rw group)
+#
+# BEFORE THE FIRST REBOOT:
+#   ❌ Mount points may have wrong permissions
+#   ❌ File managers may see "read-only" errors
+# ================================================
+
+# ⚠️  Storage Path Limitations
+# ================================================
+# This module uses /storage/emulated/0/ext by default.
+# 
+# Android's storage layer (FUSE/sdcardfs) can interfere with
+# permissions. To work around this:
+#   1. We use Magisk's magic mount to pre-create directories
+#   2. We set media_rw group (1023) + 2770 permissions
+#   3. This mimics Android's native media folders
+#
+# If you still experience issues:
+#   - Ensure you rebooted after installation
+#   - Check logs: /data/local/tmp/mounter.log
+#   - Try a root-enabled file manager
 # ================================================
 
 # ⏱️ Refresh interval for auto-mount service (seconds)
@@ -943,7 +963,7 @@ show_status() {
 # --- 🚀 Main Execution Block ---
 
 SESSION_ID=$(date +%s)_$((RANDOM % 1000))
-log "Starting Android LUKS Mounter v1.5.29-WARNINGS ✨"
+log "Starting Android LUKS Mounter v1.5.30-HYBRID ✨"
 log "Session ID: $SESSION_ID"
 log "Executing from: $(readlink -f "$0")"
 
