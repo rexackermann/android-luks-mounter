@@ -1,6 +1,9 @@
 {
     "version": "v1.5.32-GOLD",
     "versionCode": 1820,
+    "downloadURL": "https://github.com/rexackermann/android-luks-mounter/releases/download/v1.5.32-GOLD/mounter-module.zip",
+    "forumURL": "https://github.com/rexackermann/android-luks-mounter",
+    "updateType": "stable"
     "zipUrl": "https://github.com/rexackermann/android-luks-mounter/releases/download/v1.5.32-GOLD/mounter-module.zip",
     "changelog": "https://raw.githubusercontent.com/rexackermann/android-luks-mounter/main/changelog.md"
 }
