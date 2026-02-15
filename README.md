@@ -17,9 +17,9 @@ Authored with ❤️ by **Rex Ackermann**.
 - **📁 Filesystem Versatility**: Supports NTFS, ExFAT, BTRFS, F2FS, VFAT, and more.
 - **⚡ Auto-Mounting**: Automatically detects and mounts connected OTG and SD cards.
 - **🤖 Background Daemon**: Persistent polling service to handle hotplugging effortlessly.
-- **🎨 Sexy CLI**: Colorized logs, emojis, and a professional user interface.
-- **📦 Flashable Module**: One-click installation for KernelSU, APatch, and Magisk.
+- **🪄 Dynamic Skeleton**: Automatically "blesses" mount points at boot for perfect permissions.
 - **🛡️ Safety Checks**: Intelligent protection against accidental mounting of system partitions.
+- **📦 Flashable Module**: One-click installation for KernelSU, APatch, and Magisk.
 
 ---
 
@@ -38,70 +38,57 @@ Authored with ❤️ by **Rex Ackermann**.
 
 ---
 
-## 🚀 Installation Options
+## 🚀 Installation
 
-### Option 1: Flashable Module (KernelSU / APatch / Magisk)
-*Best for persistence and easy management.*
-1. Download `mounter-module.zip` from the Releases page.
-2. Flash it in your SU Manager.
-3. **Reboot**. The script is now globally available and auto-runs on boot.
-
-### Option 2: Manual Setup
-*Best for quick tests or custom environments.*
-1. Clone the repo: `git clone https://github.com/rexackermann/android-luks-mounter`
-2. Link the binary: `cd android-luks-mounter && sudo ./module/system/bin/mounter --link-bin`
-3. You can now use the `mounter` command anywhere.
+### Option 1: Flashable Module (Recommended)
+1. Download the latest `android-luks-mounter-vX.X.X.zip` from the [Releases](https://github.com/rexackermann/android-luks-mounter/releases).
+2. Flash it in your SU Manager (KernelSU, APatch, or Magisk).
+3. **Reboot**. This is required for the Dynamic Skeleton to initialize.
 
 ---
 
-## 📖 How to Use Like a Pro
+## 📖 How to Use
 
-### 1. 🔍 Discovery
-Connect your drive and find its path:
-```bash
-ls /dev/block/sd*  # Usually /dev/block/sda1 for OTG drives
-```
+### 📁 Automatic Mode (Plug & Play)
+Once installed and rebooted, simply plug in your drive. The background service will:
+1. Detect the drive within 5 seconds.
+2. Auto-unlock it if a key exists in `/data/adb/mounter/`.
+3. Mount it to your configured path (default: `/sdcard/ext/label`).
 
-### 2. 📂 Manual Mount
-Mount a partition with a custom label:
-```bash
-sudo mounter /dev/block/sda1 MyVault
-```
-
-### 3. 🔓 Unlocking & Key Management
-- **Auto-Unlock**: If a keyfile exists in your `luks_keys` directory, the script uses it!
-- **Interactive**: The script will prompt for a password or custom key if needed.
-- **💾 Auto-Unlock Setup**: After unlocking with a password, the script will offer to create a keyfile for instant access in the future.
+### ⌨️ CLI Mode
+Open Termux and run:
+- `mounter --status` : See current mount status and connected drives.
+- `mounter /dev/block/sda1 MyDrive` : Mount a specific device manually.
+- `mounter -u MyDrive` : Safely unmount a drive by its label.
 
 ---
 
-## ⚡ Power User Features
+## ⚙️ Configuration
+Your settings live at `/data/adb/mounter/config`.
 
-### 🔄 Auto-Update & Sync
-Sync your configuration with current hardware and mount everything in one command:
+### **Custom Mount Points**
+You can change where a drive appears by editing the `STORAGE_PATH` for its UUID:
 ```bash
-sudo mounter --auto-update-config
+STORAGE_PATH_abc_123="/storage/emulated/0/MyCustomFolder"
 ```
-
-### 📡 Smart Scanning
-Register your drives without mounting (updates labels in config):
-```bash
-sudo mounter --scan
-```
-
-### 🤖 Automatic Service
-Install the background daemon to handle storage hotplugging automatically:
-```bash
-sudo mounter --install-service
-```
+> [!TIP]
+> After changing a path in the config, **REBOOT ONCE**. The "Dynamic Skeleton" logic will detect the new path and ensure it has the correct permissions for Android apps to write to it.
 
 ---
 
-- **🔑 Custom Key Mapping**: You can now define a specific keyfile for any device in your `config` via `KEY_PATH_uuid="/path/to/key"`. This supports any file name (e.g., `al` without `.key`).
-- **📊 Binary Registry**: Check the top of `/data/local/tmp/mounter.log` to see exactly which binaries the script found (Termux vs System).
-- **🛡️ Deterministic Paths**: The script now uses absolute paths for everything to avoid "Unknown option" errors.
-- **📂 Custom Paths**: Edit the `config` file in your keys directory to override mount locations.
-- **⚠️ Unmounting**: Always use `mounter -u Label` before unplugging!
+## ❓ FAQ & Troubleshooting
+
+### **Q: My file manager says the drive is Read-Only!**
+**A:** This is usually because the "Magic Mount" trick didn't run. 
+1. Ensure you have **rebooted** at least once after installation.
+2. Check if your path is inside your internal storage (e.g., `/sdcard/something`).
+3. Check the logs: `cat /data/local/tmp/mounter.log`.
+
+### **Q: Why are my folders owned by `root` or `media_rw`?**
+**A:** This is intentional! Android's security layer blocks write access to files owned by regular users in shared storage. By using the `media_rw` (1023) group and the "Magic Mount" trick, we bypass these restrictions so that **all** apps can read and write to your drive.
+
+### **Q: How do I add an auto-unlock key?**
+**A:** Mount the drive once using a password. The script will ask if you want to generate a keyfile. If you say `y`, it will create a secure key in `/data/adb/mounter/` for future use.
 
 ---
 

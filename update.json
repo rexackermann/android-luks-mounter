@@ -1,9 +1,6 @@
 {
-    "version": "v1.5.32-GOLD",
-    "versionCode": 1532,
-    "downloadURL": "https://github.com/rexackermann/android-luks-mounter/releases/download/v1.5.32-GOLD/mounter-module.zip",
-    "forumURL": "https://github.com/rexackermann/android-luks-mounter",
-    "updateType": "stable"
-    "zipUrl": "https://github.com/rexackermann/android-luks-mounter/releases/download/v1.5.32-GOLD/mounter-module.zip",
+    "version": "v1.5.37-GOLD",
+    "versionCode": 1870,
+    "zipUrl": "https://github.com/rexackermann/android-luks-mounter/releases/download/v1.5.37-GOLD/android-luks-mounter-v1.5.37-GOLD.zip",
     "changelog": "https://raw.githubusercontent.com/rexackermann/android-luks-mounter/main/changelog.md"
 }

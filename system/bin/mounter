@@ -6,7 +6,7 @@
 #                                                                              #
 #   👤 Author: Rex Ackermann                                                   #
 #   🌐 GitHub: https://github.com/rexackermann                                 #
-#   🏷️ Version: v1.5.32-GOLD                                             #
+#   🏷️ Version: v1.5.37-GOLD                                                #
 #                                                                              #
 #   🛠️  Requirements: Root (Magisk/KSU), Termux, Cryptsetup, Bindfs, Blkid     #
 #   ⚖️  License: MIT                                                           #
@@ -789,8 +789,15 @@ mount_device() {
         log "${GREEN}$log_msg${NC}"
         
         # 🔗 Bindfs User View (Global NS).
-        log "Creating user-visible bindfs view at $target_storage..."
-        [ ! -d "$target_storage" ] && run_cmd "$MKDIR_BIN" -p "$target_storage"
+        # Automatic mapping to /data/media/0/ for better permission handling
+        local real_storage="$target_storage"
+        if [[ "$target_storage" == "/storage/emulated/0"* ]] || [[ "$target_storage" == "/sdcard"* ]]; then
+             real_storage=$(echo "$target_storage" | sed -E 's|^(/storage/emulated/0\|/sdcard)|/data/media/0|')
+             log "Path Mapping: $target_storage ➔ $real_storage"
+        fi
+
+        log "Creating user-visible bindfs view at $real_storage..."
+        [ ! -d "$real_storage" ] && run_cmd "$MKDIR_BIN" -p "$real_storage"
         
         # 🩹 Bindfs Safe Mode (Strip LD_PRELOAD)
         local BINDFS_ENV="env PATH=$PATH LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
@@ -802,11 +809,11 @@ mount_device() {
         # Perms: rwxrws--- (0770 + setgid) - Group write + setgid bit
         # The setgid ensures new files inherit the media_rw group
         run_cmd nsenter -t 1 -m -- $BINDFS_ENV "$BINDFS_BIN" \
-            -u 0 \
+            -u 1023 \
             -g 1023 \
             --perms=0770 \
             --create-with-perms=g+s \
-            "$mnt_point" "$target_storage"
+            "$mnt_point" "$real_storage"
         
         # 🧪 User View Verification
         if ! $NSENTER_BIN -t 1 -m -- ls -1q "$target_storage" >/dev/null 2>&1; then
@@ -968,7 +975,7 @@ show_status() {
 # --- 🚀 Main Execution Block ---
 
 SESSION_ID=$(date +%s)_$((RANDOM % 1000))
-log "Starting Android LUKS Mounter v1.5.32-GOLD ✨"
+log "Starting Android LUKS Mounter v1.5.37-GOLD ✨"
 log "Session ID: $SESSION_ID"
 log "Executing from: $(readlink -f "$0")"
 
