@@ -33,6 +33,7 @@ Authored with ❤️ by **Rex Ackermann**.
    Open Termux and run:
    ```bash
    pkg update && pkg upgrade
+   pkg install root-repo
    pkg install cryptsetup bindfs
    ```
 
