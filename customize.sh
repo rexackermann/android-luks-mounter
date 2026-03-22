@@ -69,7 +69,7 @@ if [ -n "$MISSING_DEPS" ]; then
     ui_print " "
     ui_print "  1. Open Termux"
     ui_print "  2. Run: pkg update && pkg upgrade && pkg install root-repo"
-    ui_print "  3. Run: pkg install cryptsetup bindfs util-linux"
+    ui_print "  3. Run: pkg install cryptsetup bindfs util-linux mount-utils"
     ui_print "------------------------------------------------"
     ui_print " "
     # 'abort' is a Magisk function that stops the flash process.
