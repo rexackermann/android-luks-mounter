@@ -34,7 +34,7 @@ Authored with ❤️ by **Rex Ackermann**.
    ```bash
    pkg update && pkg upgrade
    pkg install root-repo
-   pkg install cryptsetup bindfs util-linux mount-utils
+   pkg install cryptsetup bindfs util-linux mount-utils blk-utils
    ```
 
 ---
