@@ -289,6 +289,20 @@ EOF
     BASE_STORAGE="${BASE_STORAGE_PATH:-$DEFAULT_BASE_STORAGE}"
 }
 
+# 🔑 Save passphrase to config (base64-encoded, for future auto-unlock fallback).
+_save_pass_to_config() {
+    local safe_uuid="$1" pass="$2"
+    local config_file="$KEY_DIR/config"
+    [ -z "$pass" ] && return 1
+    local b64
+    b64=$(printf '%s' "$pass" | base64 | tr -d '\n')
+    # Remove stale entry if exists
+    sed -i "/^LUKS_PASS_${safe_uuid}=/d" "$config_file" 2>/dev/null
+    printf 'LUKS_PASS_%s=$(printf %%s %s | base64 -d)\n' "$safe_uuid" "$b64" >> "$config_file"
+    chmod 600 "$config_file" 2>/dev/null
+    log "Passphrase persisted to config for $(echo "$safe_uuid" | tr '_' '-') ✅"
+}
+
 # 🔗 Link Bin: Creates a symlink for easy 'mounter' execution from anywhere.
 link_bin() {
     local link_path="${1:-/system/bin/mounter}"
@@ -646,67 +660,116 @@ mount_device() {
     # 🔑 Auto-Unlock Sequence (LUKS Only).
     local keyfile="$KEY_DIR/$uuid.key"
     eval "defined_key=\${KEY_PATH_${safe_uuid}}"
+    local _brute_key=""   # which brute-force key succeeded (if any)
+    local _unlock_via=""  # track which path unlocked for auto-persist logic
 
-    # 1. Configured keyfile
+    # 0. 💾 Saved passphrase from config (LUKS_PASS_<safe_uuid>)
+    eval "_saved_pass_b64=\${LUKS_PASS_${safe_uuid}}"
+    if [ $unlocked -eq 0 ] && [ -n "$_saved_pass_b64" ]; then
+        log "Trying saved passphrase for $(basename "$device") 🔑"
+        _saved_pass=$(printf '%s' "$_saved_pass_b64" | base64 -d 2>/dev/null)
+        if printf '%s' "$_saved_pass" | run_cmd "$CRYPTSETUP_BIN" open "$device" "$mapper_name"; then
+            unlocked=1 ; _unlock_via="saved_pass"
+        fi
+        unset _saved_pass _saved_pass_b64
+    fi
+
+    # 1. Configured keyfile (KEY_PATH_<uuid> in config)
     if [ $unlocked -eq 0 ] && [ -n "$defined_key" ] && [ -f "$defined_key" ]; then
         log "Trying defined key: $defined_key"
-        run_cmd "$CRYPTSETUP_BIN" open "$device" "$mapper_name" --key-file "$defined_key" && unlocked=1
+        run_cmd "$CRYPTSETUP_BIN" open "$device" "$mapper_name" --key-file "$defined_key" && unlocked=1 && _unlock_via="key_path"
     fi
 
     # 2. Standard UUID-based keyfile
     if [ $unlocked -eq 0 ] && [ -f "$keyfile" ]; then
-        run_cmd "$CRYPTSETUP_BIN" open "$device" "$mapper_name" --key-file "$keyfile" && unlocked=1
+        run_cmd "$CRYPTSETUP_BIN" open "$device" "$mapper_name" --key-file "$keyfile" && unlocked=1 && _unlock_via="uuid_key"
+    fi
+
+    # 2b. 🌐 Explicit --key-file supplied (WebUI passphrase delivery path)
+    if [ $unlocked -eq 0 ] && [ -n "$EXPLICIT_KEYFILE" ] && [ -f "$EXPLICIT_KEYFILE" ]; then
+        log "Trying supplied passphrase/key for $(basename "$device") 🌐"
+        run_cmd "$CRYPTSETUP_BIN" open "$device" "$mapper_name" --key-file "$EXPLICIT_KEYFILE" && unlocked=1 && _unlock_via="explicit"
     fi
 
     # 3. 🕵️ Brute-force key directory
     if [ $unlocked -eq 0 ]; then
         for k in "$KEY_DIR"/*; do
             [ ! -f "$k" ] || [ "$k" = "$keyfile" ] || [ "$k" = "$defined_key" ] || [ "$(basename "$k")" = "config" ] && continue
-            run_cmd "$CRYPTSETUP_BIN" open "$device" "$mapper_name" --key-file "$k" && unlocked=1 && break
+            run_cmd "$CRYPTSETUP_BIN" open "$device" "$mapper_name" --key-file "$k" && unlocked=1 && _brute_key="$k" && _unlock_via="brute" && break
         done
     fi
 
-    # 4. Interactive Password (Keyboard)
+    # 4. Interactive Password (Keyboard / CLI only)
     if [ $unlocked -eq 0 ]; then
         log "Manual unlock needed for $device:"
         echo " 1) Password (default) | 2) Select Keyfile | s) Skip"
         read -r unlock_opt
         case "$unlock_opt" in
-            2) printf "Keyfile path: " ; read -r mk ; [ -f "$mk" ] && run_cmd "$CRYPTSETUP_BIN" open "$device" "$mapper_name" --key-file "$mk" && unlocked=1 ;;
+            2) printf "Keyfile path: " ; read -r mk ; [ -f "$mk" ] && run_cmd "$CRYPTSETUP_BIN" open "$device" "$mapper_name" --key-file "$mk" && unlocked=1 && _unlock_via="interactive_key" ;;
             s|S) return 1 ;;
-            *) log "Password for $device:" ; stty -echo ; read -r _LUKS_PASS ; stty echo ; echo "" 
-               # 🛡️ Aggressive conflict resolution: If opening fails due to "in use", try to find who is using it.
+            *) log "Password for $device:" ; stty -echo ; read -r _LUKS_PASS ; stty echo ; echo ""
                if ! printf '%s' "$_LUKS_PASS" | run_cmd "$CRYPTSETUP_BIN" open "$device" "$mapper_name"; then
                    warn "$device reports 'already in use'. Re-scanning for ghosts..."
                    local ghost=$(find_existing_mapper "$device")
                    if [ -n "$ghost" ]; then
                        log "Found orphan mapper: $ghost. Closing..."
                        run_cmd "$CRYPTSETUP_BIN" close "$ghost"
-                       printf '%s' "$_LUKS_PASS" | run_cmd "$CRYPTSETUP_BIN" open "$device" "$mapper_name" && unlocked=1
+                       printf '%s' "$_LUKS_PASS" | run_cmd "$CRYPTSETUP_BIN" open "$device" "$mapper_name" && unlocked=1 && _unlock_via="interactive_pass"
                    else
                        error "Failed to open $device."
                    fi
                else
-                   unlocked=1
+                   unlocked=1 ; _unlock_via="interactive_pass"
                fi
-               [ $unlocked -eq 0 ] && { 
-                   error "Unlock failed." 
+               [ $unlocked -eq 0 ] && {
+                   error "Unlock failed."
                    local dev_tag="AndroidMounter_$(basename "$device")"
                    send_notification "Android Mounter" "Unlock Failed for $(basename "$device") 🔒" "$dev_tag"
-                   unset _LUKS_PASS ; return 1 
-               } 
+                   unset _LUKS_PASS ; return 1
+               }
                ;;
         esac
-        # 🔑 Offer to save this as a keyfile for next time.
-        if [ $unlocked -eq 1 ]; then
-            log "Successfully unlocked! ✨"
-            echo "Save new keyfile for auto-unlock? [y/N]" ; read -r sk
-            if [ "$sk" = "y" ]; then
-                dd if=/dev/urandom of="$keyfile" bs=512 count=1 >/dev/null 2>&1 ; chmod 600 "$keyfile"
-                [ -n "$_LUKS_PASS" ] && printf '%s' "$_LUKS_PASS" | run_cmd "$CRYPTSETUP_BIN" luksAddKey "$device" "$keyfile" || run_cmd "$CRYPTSETUP_BIN" luksAddKey "$device" "$keyfile"
-            fi
-        fi ; unset _LUKS_PASS
     fi
+
+    # 🔐 Auto-Persist: enroll keyfile so next unlock is automatic (no prompt, no brute-force).
+    # Runs after ANY successful unlock where UUID.key does not yet exist.
+    if [ $unlocked -eq 1 ] && [ ! -f "$keyfile" ]; then
+        case "$_unlock_via" in
+            explicit|interactive_pass|saved_pass|brute)
+                log "Auto-enrolling keyfile for future automatic unlock... 🔑"
+                local _tmp_key
+                _tmp_key=$(mktemp) || { warn "mktemp failed — skipping enroll"; unset _LUKS_PASS; return 0; }
+                dd if=/dev/urandom of="$_tmp_key" bs=512 count=1 >/dev/null 2>&1
+                local _enrolled=0
+                case "$_unlock_via" in
+                    explicit)
+                        run_cmd "$CRYPTSETUP_BIN" luksAddKey "$device" "$_tmp_key" --key-file "$EXPLICIT_KEYFILE" && _enrolled=1 ;;
+                    interactive_pass)
+                        printf '%s' "$_LUKS_PASS" | run_cmd "$CRYPTSETUP_BIN" luksAddKey "$device" "$_tmp_key" && _enrolled=1 ;;
+                    saved_pass)
+                        # Re-read saved pass to authorise luksAddKey
+                        eval "_sp_b64=\${LUKS_PASS_${safe_uuid}}"
+                        _sp=$(printf '%s' "$_sp_b64" | base64 -d 2>/dev/null)
+                        printf '%s' "$_sp" | run_cmd "$CRYPTSETUP_BIN" luksAddKey "$device" "$_tmp_key" && _enrolled=1
+                        unset _sp _sp_b64 ;;
+                    brute)
+                        run_cmd "$CRYPTSETUP_BIN" luksAddKey "$device" "$_tmp_key" --key-file "$_brute_key" && _enrolled=1 ;;
+                esac
+                if [ $_enrolled -eq 1 ]; then
+                    mv "$_tmp_key" "$keyfile" && chmod 600 "$keyfile"
+                    log "Keyfile enrolled: $keyfile ✅ (auto-unlock active from next mount)"
+                else
+                    rm -f "$_tmp_key"
+                    warn "luksAddKey failed (key slots full?). Saving passphrase to config as fallback. 💾"
+                    case "$_unlock_via" in
+                        explicit)    _save_pass_to_config "$safe_uuid" "$(cat "$EXPLICIT_KEYFILE")" ;;
+                        interactive_pass) _save_pass_to_config "$safe_uuid" "$_LUKS_PASS" ;;
+                    esac
+                fi
+                ;;
+        esac
+    fi
+    unset _LUKS_PASS
 
     # 🔍 Nested Partition Scan (Recursive).
     # LUKS Containers often act as virtual disks containing their own partition tables.
@@ -1021,7 +1084,7 @@ log "Executing from: $(readlink -f "$0")"
 load_config
 check_tools
 
-MODE="mount" ; AUTO_MODE="0" ; DEVICE="" ; LABEL=""
+MODE="mount" ; AUTO_MODE="0" ; DEVICE="" ; LABEL="" ; EXPLICIT_KEYFILE=""
 
 # 2️⃣ Parse command line arguments.
 while [ $# -gt 0 ]; do
@@ -1034,6 +1097,7 @@ while [ $# -gt 0 ]; do
         --scan) MODE="scan" ; shift ;;
         -s|--status) MODE="status" ; shift ;;
         --auto-update-config) MODE="auto_update" ; AUTO_MODE="1" ; shift ;;
+        --key-file) shift ; EXPLICIT_KEYFILE="$1" ; shift ;;
         *) [ -z "$DEVICE" ] && [ "$MODE" != "unmount" ] && DEVICE="$1" || LABEL="$1" ; shift ;;
     esac
 done
