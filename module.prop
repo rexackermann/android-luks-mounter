@@ -1,7 +1,7 @@
 id=android_luks_mounter
 name=Android LUKS Mounter
-version=v1.5.77
-versionCode=1577
+version=v1.5.78
+versionCode=1578
 author=Rex Ackermann
 description=Professional storage management for LUKS and plain drives on Android. Supports auto-mounting, Termux integration, and more.
 updateJson=https://raw.githubusercontent.com/rexackermann/android-luks-mounter/main/update.json
